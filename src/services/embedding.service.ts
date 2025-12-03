@@ -1,22 +1,62 @@
-import OpenAI from "openai";
 import { config } from "../config";
 import { DEFAULT_EMBEDDING_BATCH_SIZE } from "../constants/defaults";
 import { ERROR_MESSAGES } from "../constants/messages";
+
+interface EmbeddingResponse {
+  data: Array<{
+    embedding: number[];
+    index: number;
+  }>;
+  model: string;
+  usage: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
 
 /**
  * 向量嵌入服务
  * 使用 Embedding API 生成文本的向量表示
  */
 export class EmbeddingService {
-  private openai: OpenAI;
+  private apiKey: string;
+  private baseUrl: string;
   private model: string;
 
   constructor() {
-    this.openai = new OpenAI({
-      apiKey: config.embeddingApi.apiKey,
-      baseURL: config.embeddingApi.baseUrl,
-    });
+    this.apiKey = config.embeddingApi.apiKey;
+    this.baseUrl = config.embeddingApi.baseUrl;
     this.model = config.embeddingApi.model;
+  }
+
+  /**
+   * 调用 Embedding API
+   * @param input 输入文本或文本数组
+   * @returns API 响应
+   */
+  private async callEmbeddingApi(
+    input: string | string[]
+  ): Promise<EmbeddingResponse> {
+    const url = `${this.baseUrl}/embeddings`;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        input: input,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Embedding API error: ${response.status} - ${errorText}`);
+    }
+
+    return response.json() as Promise<EmbeddingResponse>;
   }
 
   /**
@@ -27,10 +67,7 @@ export class EmbeddingService {
   async generateEmbedding(text: string): Promise<number[]> {
     try {
       console.log("Generating embedding for text with length:", text.length);
-      const response = await this.openai.embeddings.create({
-        model: this.model,
-        input: text,
-      });
+      const response = await this.callEmbeddingApi(text);
 
       return response.data[0].embedding;
     } catch (error) {
@@ -71,25 +108,11 @@ export class EmbeddingService {
       const batchTexts = batch.map((item) => item.text);
 
       try {
-        console.log(
-          `Generating embeddings for batch ${
-            Math.floor(i / DEFAULT_EMBEDDING_BATCH_SIZE) + 1
-          } with ${batchTexts.length} texts : ${batchTexts}`
-        );
-        const response = await this.openai.embeddings.create({
-          model: this.model,
-          input: batchTexts,
-        });
-
-        console.log(`Received embeddings for batch:`, response.data);
+        const response = await this.callEmbeddingApi(batchTexts);
 
         const batchEmbeddings = response.data
           .sort((a, b) => a.index - b.index)
           .map((item) => item.embedding);
-        console.log(
-          `Received ${batchEmbeddings.length} embeddings for current batch.`,
-          batchEmbeddings
-        );
 
         // 将结果放回原始位置
         for (let j = 0; j < batch.length; j++) {
