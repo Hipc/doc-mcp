@@ -162,22 +162,27 @@ export class DocumentService {
           },
         });
 
-        // 保存内容向量嵌入
-        await this.saveEmbedding(
-          dbChunk.id,
-          contentEmbedding,
-          EMBEDDING_TYPES.CONTENT
-        );
+        // 保存内容向量嵌入（仅当嵌入非空时）
+        if (contentEmbedding && contentEmbedding.length > 0) {
+          await this.saveEmbedding(
+            dbChunk.id,
+            contentEmbedding,
+            EMBEDDING_TYPES.CONTENT
+          );
+          totalEmbeddingsCreated++;
+        }
 
-        // 保存摘要向量嵌入
-        await this.saveEmbedding(
-          dbChunk.id,
-          summaryEmbedding,
-          EMBEDDING_TYPES.SUMMARY
-        );
+        // 保存摘要向量嵌入（仅当嵌入非空时）
+        if (summaryEmbedding && summaryEmbedding.length > 0) {
+          await this.saveEmbedding(
+            dbChunk.id,
+            summaryEmbedding,
+            EMBEDDING_TYPES.SUMMARY
+          );
+          totalEmbeddingsCreated++;
+        }
 
         totalChunksCreated++;
-        totalEmbeddingsCreated += 2; // 每个切片有两个嵌入（内容+摘要）
 
         onProgress?.("saving_chunks", i + 1, chunks.length);
       }

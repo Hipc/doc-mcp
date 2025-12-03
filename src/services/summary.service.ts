@@ -39,6 +39,11 @@ export class SummaryService {
     content: string,
     documentType?: string
   ): Promise<string> {
+    // 如果内容为空，直接返回空字符串
+    if (!content || content.trim().length === 0) {
+      return "";
+    }
+
     const systemPrompt = this.getSystemPrompt(documentType);
 
     try {
@@ -52,7 +57,12 @@ export class SummaryService {
         temperature: DEFAULT_SUMMARY_TEMPERATURE,
       });
 
-      return response.choices[0]?.message?.content || "";
+      const summary = response.choices[0]?.message?.content || "";
+      // 如果摘要为空，使用内容的前200字作为摘要
+      if (!summary.trim()) {
+        return content.slice(0, 200) + (content.length > 200 ? "..." : "");
+      }
+      return summary;
     } catch (error) {
       console.error(ERROR_MESSAGES.SUMMARY_FAILED, error);
       throw error;

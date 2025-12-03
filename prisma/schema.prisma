@@ -8,6 +8,7 @@ generator client {
 
 datasource db {
     provider   = "postgresql"
+    url        = env("DATABASE_URL")
     extensions = [vector]
 }
 
@@ -82,11 +83,11 @@ model DocumentChunk {
 
 // 向量嵌入表 - 存储文档切片的向量表示
 model ChunkEmbedding {
-    id            String                      @id @default(uuid())
-    embedding     Unsupported("vector(1536)") // OpenAI text-embedding-3-small 的维度
+    id            String                     @id @default(uuid())
+    embedding     Unsupported("vector(768)") // gemini-embedding-001 向量维度768
     embeddingType String // 嵌入类型：content（原文内容）、summary（摘要）
     model         String // 使用的嵌入模型
-    createdAt     DateTime                    @default(now())
+    createdAt     DateTime                   @default(now())
 
     // 关联文档切片
     chunkId String

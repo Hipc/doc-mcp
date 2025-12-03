@@ -26,6 +26,7 @@ export class EmbeddingService {
    */
   async generateEmbedding(text: string): Promise<number[]> {
     try {
+      console.log("Generating embedding for text with length:", text.length);
       const response = await this.openai.embeddings.create({
         model: this.model,
         input: text,
@@ -48,26 +49,56 @@ export class EmbeddingService {
       return [];
     }
 
-    const results: number[][] = [];
+    // 过滤空文本并记录原始索引
+    const validTexts: { index: number; text: string }[] = [];
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i]?.trim();
+      if (text && text.length > 0) {
+        validTexts.push({ index: i, text });
+      }
+    }
 
-    for (let i = 0; i < texts.length; i += DEFAULT_EMBEDDING_BATCH_SIZE) {
-      const batch = texts.slice(i, i + DEFAULT_EMBEDDING_BATCH_SIZE);
+    if (validTexts.length === 0) {
+      // 如果所有文本都为空，返回空向量数组
+      console.warn("所有输入文本都为空，无法生成嵌入");
+      return texts.map(() => []);
+    }
+
+    const results: number[][] = new Array(texts.length).fill([]);
+
+    for (let i = 0; i < validTexts.length; i += DEFAULT_EMBEDDING_BATCH_SIZE) {
+      const batch = validTexts.slice(i, i + DEFAULT_EMBEDDING_BATCH_SIZE);
+      const batchTexts = batch.map((item) => item.text);
 
       try {
+        console.log(
+          `Generating embeddings for batch ${
+            Math.floor(i / DEFAULT_EMBEDDING_BATCH_SIZE) + 1
+          } with ${batchTexts.length} texts : ${batchTexts}`
+        );
         const response = await this.openai.embeddings.create({
           model: this.model,
-          input: batch,
+          input: batchTexts,
         });
+
+        console.log(`Received embeddings for batch:`, response.data);
 
         const batchEmbeddings = response.data
           .sort((a, b) => a.index - b.index)
           .map((item) => item.embedding);
+        console.log(
+          `Received ${batchEmbeddings.length} embeddings for current batch.`,
+          batchEmbeddings
+        );
 
-        results.push(...batchEmbeddings);
+        // 将结果放回原始位置
+        for (let j = 0; j < batch.length; j++) {
+          results[batch[j].index] = batchEmbeddings[j];
+        }
       } catch (error) {
         console.error(
           `${ERROR_MESSAGES.BATCH_EMBEDDING_FAILED} (批次 ${
-            i / DEFAULT_EMBEDDING_BATCH_SIZE + 1
+            Math.floor(i / DEFAULT_EMBEDDING_BATCH_SIZE) + 1
           }):`,
           error
         );
