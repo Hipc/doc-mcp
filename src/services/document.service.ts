@@ -1,6 +1,10 @@
 import { DocumentType, Prisma } from "@prisma/client";
 import { prisma } from "../database";
-import { ChunkingService, StrategyChunkResult } from "./chunking.service";
+import {
+  ChunkingService,
+  StrategyChunkResult,
+  ParentChunkResult,
+} from "./chunking.service";
 import { SummaryService } from "./summary.service";
 import { EmbeddingService } from "./embedding.service";
 import { config } from "../config";
@@ -25,7 +29,8 @@ export interface UploadDocumentResponse {
   title?: string;
   type: DocumentType;
   project_name: string;
-  chunks_created: number;
+  parent_chunks_created: number;
+  child_chunks_created: number;
   embeddings_created: number;
   strategies: ChunkStrategyConfig[];
 }
@@ -42,6 +47,7 @@ export type ProgressCallback = (
 /**
  * 文档服务
  * 处理文档的上传、切割、摘要生成和向量嵌入
+ * 使用父子索引策略：父切片提供上下文，子切片用于向量检索
  */
 export class DocumentService {
   private chunkingService: ChunkingService;
@@ -55,12 +61,11 @@ export class DocumentService {
   }
 
   /**
-   * 上传并处理文档
-   * 完整的 RAG 处理流程：
+   * 上传并处理文档（父子索引流程）
    * 1. 保存原始文档
-   * 2. 使用多种策略切割文档
-   * 3. 为每个切片生成摘要
-   * 4. 为切片内容和摘要生成向量嵌入
+   * 2. 使用递归字符切分创建父子切片
+   * 3. 为父切片生成摘要
+   * 4. 为子切片生成向量嵌入
    */
   async uploadDocument(
     request: UploadDocumentRequest,
@@ -81,13 +86,14 @@ export class DocumentService {
     });
     onProgress?.("saving_document", 1, 1);
 
-    // 阶段2: 使用多种策略切割文档
+    // 阶段2: 使用递归字符切分创建父子切片
     onProgress?.("chunking", 0, 1);
     const strategyResults =
       this.chunkingService.chunkWithAllStrategies(content);
     onProgress?.("chunking", 1, 1);
 
-    let totalChunksCreated = 0;
+    let totalParentChunksCreated = 0;
+    let totalChildChunksCreated = 0;
     let totalEmbeddingsCreated = 0;
     const usedStrategies: ChunkStrategyConfig[] = [];
 
@@ -98,93 +104,105 @@ export class DocumentService {
       strategyIndex++
     ) {
       const strategyResult = strategyResults[strategyIndex];
-      const { strategy, chunks } = strategyResult;
+      const { strategy, parentChunks } = strategyResult;
 
-      if (chunks.length === 0) continue;
+      if (parentChunks.length === 0) continue;
 
       usedStrategies.push(strategy);
 
       // 确保策略在数据库中存在
       const dbStrategy = await this.ensureStrategy(strategy);
 
-      // 阶段3.1: 为每个切片生成摘要
-      onProgress?.("generating_summaries", 0, chunks.length);
-      const summaries: string[] = [];
+      // 阶段3.1: 为父切片生成摘要
+      onProgress?.("generating_summaries", 0, parentChunks.length);
+      const parentSummaries: string[] = [];
 
-      for (let i = 0; i < chunks.length; i++) {
+      for (let i = 0; i < parentChunks.length; i++) {
         const summary = await this.summaryService.generateSummary(
-          chunks[i].content,
+          parentChunks[i].content,
           type
         );
-        summaries.push(summary);
-        onProgress?.("generating_summaries", i + 1, chunks.length);
+        parentSummaries.push(summary);
+        onProgress?.("generating_summaries", i + 1, parentChunks.length);
       }
 
-      // 阶段3.2: 生成向量嵌入（同时为内容和摘要生成）
-      onProgress?.("generating_embeddings", 0, chunks.length * 2);
+      // 阶段3.2: 收集所有子切片内容用于批量生成嵌入
+      const allChildContents: string[] = [];
+      const childToParentMap: { parentIdx: number; childIdx: number }[] = [];
 
-      // 准备所有需要嵌入的文本
-      const contentTexts = chunks.map((c) => c.content);
-      const summaryTexts = summaries;
-      const allTexts = [...contentTexts, ...summaryTexts];
+      for (let pIdx = 0; pIdx < parentChunks.length; pIdx++) {
+        const parent = parentChunks[pIdx];
+        for (let cIdx = 0; cIdx < parent.children.length; cIdx++) {
+          allChildContents.push(parent.children[cIdx].content);
+          childToParentMap.push({ parentIdx: pIdx, childIdx: cIdx });
+        }
+      }
 
+      // 阶段3.3: 为子切片生成向量嵌入
+      onProgress?.("generating_embeddings", 0, allChildContents.length);
       const allEmbeddings = await this.embeddingService.generateEmbeddings(
-        allTexts
+        allChildContents
       );
-      const contentEmbeddings = allEmbeddings.slice(0, chunks.length);
-      const summaryEmbeddings = allEmbeddings.slice(chunks.length);
-
       onProgress?.(
         "generating_embeddings",
-        chunks.length * 2,
-        chunks.length * 2
+        allChildContents.length,
+        allChildContents.length
       );
 
-      // 阶段3.3: 保存切片和嵌入到数据库
-      onProgress?.("saving_chunks", 0, chunks.length);
+      // 阶段3.4: 保存父切片、子切片和嵌入到数据库
+      onProgress?.("saving_chunks", 0, parentChunks.length);
 
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        const summary = summaries[i];
-        const contentEmbedding = contentEmbeddings[i];
-        const summaryEmbedding = summaryEmbeddings[i];
+      let embeddingIndex = 0;
 
-        // 创建切片记录
-        const dbChunk = await prisma.documentChunk.create({
+      for (let pIdx = 0; pIdx < parentChunks.length; pIdx++) {
+        const parentChunk = parentChunks[pIdx];
+        const parentSummary = parentSummaries[pIdx];
+
+        // 创建父切片记录
+        const dbParentChunk = await prisma.parentChunk.create({
           data: {
-            content: chunk.content,
-            chunkIndex: chunk.chunkIndex,
-            startPosition: chunk.startPosition,
-            endPosition: chunk.endPosition,
-            summary,
+            content: parentChunk.content,
+            parentIndex: parentChunk.parentIndex,
+            startPosition: parentChunk.startPosition,
+            endPosition: parentChunk.endPosition,
+            summary: parentSummary,
             documentId: document.id,
             strategyId: dbStrategy.id,
           },
         });
+        totalParentChunksCreated++;
 
-        // 保存内容向量嵌入（仅当嵌入非空时）
-        if (contentEmbedding && contentEmbedding.length > 0) {
-          await this.saveEmbedding(
-            dbChunk.id,
-            contentEmbedding,
-            EMBEDDING_TYPES.CONTENT
-          );
-          totalEmbeddingsCreated++;
+        // 创建子切片记录
+        for (let cIdx = 0; cIdx < parentChunk.children.length; cIdx++) {
+          const childChunk = parentChunk.children[cIdx];
+          const childEmbedding = allEmbeddings[embeddingIndex];
+
+          // 创建子切片
+          const dbChildChunk = await prisma.childChunk.create({
+            data: {
+              content: childChunk.content,
+              chunkIndex: childChunk.chunkIndex,
+              startPosition: childChunk.startPosition,
+              endPosition: childChunk.endPosition,
+              parentChunkId: dbParentChunk.id,
+            },
+          });
+          totalChildChunksCreated++;
+
+          // 保存子切片的向量嵌入
+          if (childEmbedding && childEmbedding.length > 0) {
+            await this.saveEmbedding(
+              dbChildChunk.id,
+              childEmbedding,
+              EMBEDDING_TYPES.CONTENT
+            );
+            totalEmbeddingsCreated++;
+          }
+
+          embeddingIndex++;
         }
 
-        // 保存摘要向量嵌入（仅当嵌入非空时）
-        if (summaryEmbedding && summaryEmbedding.length > 0) {
-          await this.saveEmbedding(
-            dbChunk.id,
-            summaryEmbedding,
-            EMBEDDING_TYPES.SUMMARY
-          );
-          totalEmbeddingsCreated++;
-        }
-
-        totalChunksCreated++;
-
-        onProgress?.("saving_chunks", i + 1, chunks.length);
+        onProgress?.("saving_chunks", pIdx + 1, parentChunks.length);
       }
     }
 
@@ -193,23 +211,25 @@ export class DocumentService {
       title: document.title || undefined,
       type: document.type,
       project_name: document.projectName,
-      chunks_created: totalChunksCreated,
+      parent_chunks_created: totalParentChunksCreated,
+      child_chunks_created: totalChildChunksCreated,
       embeddings_created: totalEmbeddingsCreated,
       strategies: usedStrategies,
     };
   }
 
   /**
-   * 确保切割策略存在于数据库中
+   * 确保切割策略存在于数据库中（父子索引版本）
    */
   private async ensureStrategy(
     strategy: ChunkStrategyConfig
   ): Promise<{ id: string }> {
     const existing = await prisma.chunkStrategy.findUnique({
       where: {
-        chunkSize_overlap: {
-          chunkSize: strategy.chunkSize,
-          overlap: strategy.overlap,
+        parentChunkSize_childChunkSize_overlapPercent: {
+          parentChunkSize: strategy.parentChunkSize,
+          childChunkSize: strategy.childChunkSize,
+          overlapPercent: strategy.overlapPercent,
         },
       },
     });
@@ -220,8 +240,9 @@ export class DocumentService {
 
     return await prisma.chunkStrategy.create({
       data: {
-        chunkSize: strategy.chunkSize,
-        overlap: strategy.overlap,
+        parentChunkSize: strategy.parentChunkSize,
+        childChunkSize: strategy.childChunkSize,
+        overlapPercent: strategy.overlapPercent,
         name: strategy.name,
       },
     });
@@ -247,16 +268,20 @@ export class DocumentService {
   }
 
   /**
-   * 根据ID获取文档
+   * 根据ID获取文档（包含父子切片）
    */
   async getDocument(documentId: string) {
     return await prisma.document.findUnique({
       where: { id: documentId },
       include: {
-        chunks: {
+        parentChunks: {
           include: {
             strategy: true,
-            embeddings: true,
+            childChunks: {
+              include: {
+                embeddings: true,
+              },
+            },
           },
         },
       },

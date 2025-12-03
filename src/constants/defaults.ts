@@ -2,17 +2,40 @@
  * 默认值常量
  */
 
-// 切割策略配置接口
+// 切割策略配置接口（父子索引）
 export interface ChunkStrategyConfig {
-  chunkSize: number; // 切割块大小（字符数）
-  overlap: number; // 重叠大小（字符数）
+  parentChunkSize: number; // 父块大小（字符数）
+  childChunkSize: number; // 子块大小（字符数）
+  overlapPercent: number; // 重叠百分比（0-100，默认20）
   name?: string; // 策略名称
 }
 
-// 默认切割策略
+// 递归字符切分的分隔符列表（按优先级排序）
+export const RECURSIVE_SEPARATORS = [
+  "\n\n", // 段落分隔
+  "\n", // 换行
+  "。", // 中文句号
+  "！", // 中文感叹号
+  "？", // 中文问号
+  ".", // 英文句号
+  "!", // 英文感叹号
+  "?", // 英文问号
+  ";", // 英文分号
+  "；", // 中文分号
+  ",", // 英文逗号
+  "，", // 中文逗号
+  " ", // 空格
+  "", // 字符级切分（最后手段）
+];
+
+// 默认切割策略（父子索引）
 export const DEFAULT_CHUNK_STRATEGIES: ChunkStrategyConfig[] = [
-  { chunkSize: 1000, overlap: 200, name: "small" },
-  { chunkSize: 2000, overlap: 400, name: "medium" },
+  {
+    parentChunkSize: 2000,
+    childChunkSize: 500,
+    overlapPercent: 20,
+    name: "default",
+  },
 ];
 
 // 默认服务配置

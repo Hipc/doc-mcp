@@ -31,37 +31,38 @@ model Document {
     createdAt   DateTime     @default(now())
     updatedAt   DateTime     @updatedAt
 
-    // 关联的文档切片
-    chunks DocumentChunk[]
+    // 关联的父切片
+    parentChunks ParentChunk[]
 
     @@index([projectName])
     @@index([type])
     @@map("documents")
 }
 
-// 切割策略表 - 记录使用的切割配置
+// 切割策略表 - 记录使用的切割配置（父子索引）
 model ChunkStrategy {
-    id        String   @id @default(uuid())
-    chunkSize Int // 切割块大小（字符数）
-    overlap   Int // 重叠大小（字符数）
-    name      String? // 策略名称，如 "small", "medium", "large"
-    createdAt DateTime @default(now())
+    id              String   @id @default(uuid())
+    parentChunkSize Int // 父块大小（字符数）
+    childChunkSize  Int // 子块大小（字符数）
+    overlapPercent  Int // 重叠百分比（0-100）
+    name            String? // 策略名称
+    createdAt       DateTime @default(now())
 
-    // 使用此策略的切片
-    chunks DocumentChunk[]
+    // 使用此策略的父切片
+    parentChunks ParentChunk[]
 
-    @@unique([chunkSize, overlap])
+    @@unique([parentChunkSize, childChunkSize, overlapPercent])
     @@map("chunk_strategies")
 }
 
-// 文档切片表 - 存储切割后的文档片段
-model DocumentChunk {
+// 父切片表 - 存储较大的文档片段（用于检索上下文）
+model ParentChunk {
     id            String   @id @default(uuid())
-    content       String // 切片内容
-    chunkIndex    Int // 在原文档中的序号
+    content       String // 父切片内容
+    parentIndex   Int // 在原文档中的序号
     startPosition Int // 在原文档中的起始位置
     endPosition   Int // 在原文档中的结束位置
-    summary       String? // 切片摘要
+    summary       String? // 父切片摘要
     createdAt     DateTime @default(now())
     updatedAt     DateTime @updatedAt
 
@@ -73,15 +74,36 @@ model DocumentChunk {
     strategyId String
     strategy   ChunkStrategy @relation(fields: [strategyId], references: [id])
 
-    // 关联的向量嵌入
-    embeddings ChunkEmbedding[]
+    // 关联的子切片
+    childChunks ChildChunk[]
 
     @@index([documentId])
     @@index([strategyId])
-    @@map("document_chunks")
+    @@map("parent_chunks")
 }
 
-// 向量嵌入表 - 存储文档切片的向量表示
+// 子切片表 - 存储较小的文档片段（用于向量检索）
+model ChildChunk {
+    id            String   @id @default(uuid())
+    content       String // 子切片内容
+    chunkIndex    Int // 在父切片中的序号
+    startPosition Int // 在原文档中的起始位置
+    endPosition   Int // 在原文档中的结束位置
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+
+    // 关联父切片
+    parentChunkId String
+    parentChunk   ParentChunk @relation(fields: [parentChunkId], references: [id], onDelete: Cascade)
+
+    // 关联的向量嵌入
+    embeddings ChunkEmbedding[]
+
+    @@index([parentChunkId])
+    @@map("child_chunks")
+}
+
+// 向量嵌入表 - 存储子切片的向量表示
 model ChunkEmbedding {
     id            String                      @id @default(uuid())
     embedding     Unsupported("vector(3072)") // text-embedding-3-small 向量维度3072
@@ -89,9 +111,9 @@ model ChunkEmbedding {
     model         String // 使用的嵌入模型
     createdAt     DateTime                    @default(now())
 
-    // 关联文档切片
+    // 关联子切片
     chunkId String
-    chunk   DocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+    chunk   ChildChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
 
     @@index([chunkId])
     @@map("chunk_embeddings")
