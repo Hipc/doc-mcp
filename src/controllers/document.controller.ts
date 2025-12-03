@@ -252,7 +252,7 @@ export async function searchDocuments(
       project_name,
       top_k: top_k ? Number(top_k) : undefined,
       use_hyde: use_hyde === true,
-      use_smart_query: use_smart_query === true,
+      use_smart_query: use_smart_query !== false,
       similarity_threshold: similarity_threshold
         ? Number(similarity_threshold)
         : undefined,

@@ -108,8 +108,7 @@ export class QueryService {
     try {
       const result = await this.callChatApi(
         systemPrompt,
-        `分析以下查询：${query}`,
-        2000
+        `分析以下查询：${query}`
       );
 
       // 解析 JSON 结果
@@ -178,15 +177,16 @@ export class QueryService {
    * @returns 扩展后的查询
    */
   async expandQuery(query: string): Promise<string> {
-    const systemPrompt = `你是一个查询扩展专家。你的任务是将用户的简短查询扩展为更详细的搜索查询。
+    const systemPrompt = `你是一个查询扩展专家。你的任务是将用户的简短查询扩展为更适合文档检索的搜索文本。
 
-规则：
-1. 保留原始查询的核心意图
-2. 添加相关的同义词和近义词
+要求：
+1. 保留原始查询的核心意图和关键词
+2. 添加相关的同义词、近义词
 3. 添加可能相关的技术术语
-4. 输出格式为一段连续的文本，不要用列表
-5. 长度控制在100-150字
-6. 直接输出扩展后的查询，不要有任何前缀或解释`;
+4. 使用陈述句而非疑问句
+5. 输出格式为一段连续的文本，不要用列表
+6. 长度控制在50-100字
+7. 直接输出扩展后的文本，不要有任何前缀或解释`;
 
     try {
       const expanded = await this.callChatApi(
@@ -208,14 +208,19 @@ export class QueryService {
    * @returns 假设性文档内容
    */
   async generateHypotheticalDocument(query: string): Promise<string> {
-    const systemPrompt = `你是一个技术文档专家。根据用户的问题，生成一段假设性的文档内容，就像这段内容存在于某个文档中能够回答这个问题。
+    const systemPrompt = `你是一个技术文档专家。根据用户的问题，生成一段假设性的文档内容，就像这段内容存在于某个技术文档中能够回答这个问题。
 
-规则：
+要求：
 1. 直接生成文档内容，不要有"根据您的问题"等前缀
-2. 使用技术文档的写作风格
-3. 内容应该具体且信息丰富
-4. 长度控制在150-250字
-5. 可以包含代码示例、API说明、配置示例等（如果相关）`;
+2. 使用技术文档的陈述式写作风格（不是问答式）
+3. 内容应该具体、准确、信息丰富
+4. 长度控制在100-200字
+5. 可以包含：
+   - 功能描述和使用说明
+   - 配置参数和选项
+   - 代码示例（如果相关）
+   - API 接口说明
+6. 使用与技术文档相同的术语和表达方式`;
 
     try {
       const hypotheticalDoc = await this.callChatApi(

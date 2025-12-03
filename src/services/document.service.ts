@@ -488,51 +488,125 @@ export class DocumentService {
 
   /**
    * 重排序结果
-   * 使用原始查询与结果的语义相关性进行重排序
+   * 使用 LLM 对检索结果进行智能重排序
    */
   private async rerankResults(
     originalQuery: string,
     results: SearchResultItem[],
     topK: number
   ): Promise<SearchResultItem[]> {
-    // 为原始查询生成 embedding
-    const queryEmbedding = await this.embeddingService.generateEmbedding(
-      originalQuery
-    );
+    if (results.length <= topK) {
+      return results;
+    }
 
-    // 为每个结果计算与原始查询的相关性分数
-    const scoredResults = await Promise.all(
-      results.map(async (result) => {
-        // 组合子切片和父切片摘要作为重排序的文本
-        const combinedText = `${result.child_chunk_content}\n${
-          result.parent_chunk_summary || ""
-        }`;
-        const resultEmbedding = await this.embeddingService.generateEmbedding(
-          combinedText
-        );
+    try {
+      // 使用 LLM 进行重排序
+      console.log("调用 LLM 进行结果重排序");
+      const rerankedResults = await this.llmRerank(
+        originalQuery,
+        results,
+        topK
+      );
+      return rerankedResults;
+    } catch (error) {
+      console.error("LLM 重排序失败，使用原始排序:", error);
+      return results.slice(0, topK);
+    }
+  }
 
-        // 计算与原始查询的余弦相似度
-        const rerankScore = EmbeddingService.cosineSimilarity(
-          queryEmbedding,
-          resultEmbedding
-        );
+  /**
+   * 使用 LLM 进行重排序
+   */
+  private async llmRerank(
+    query: string,
+    results: SearchResultItem[],
+    topK: number
+  ): Promise<SearchResultItem[]> {
+    // 构建候选文档列表
+    const candidates = results.map((r, idx) => ({
+      id: idx,
+      content: r.child_chunk_content.substring(0, 500), // 截断以控制 token
+      summary: r.parent_chunk_summary?.substring(0, 200) || "",
+    }));
 
-        // 综合原始相似度和重排序分数
-        // 原始相似度权重 0.4，重排序分数权重 0.6
+    const systemPrompt = `你是一个文档相关性评估专家。根据用户查询，对候选文档进行相关性评分。
+
+评分标准（0-10分）：
+- 10分：完全匹配，直接回答了查询
+- 7-9分：高度相关，包含查询所需的主要信息
+- 4-6分：部分相关，包含一些相关信息
+- 1-3分：略微相关，仅有少量相关内容
+- 0分：完全不相关
+
+请以JSON数组格式输出每个文档的评分：
+[{"id": 0, "score": 8}, {"id": 1, "score": 5}, ...]
+
+只输出JSON数组，不要其他内容。`;
+
+    const userContent = `查询：${query}
+
+候选文档：
+${candidates
+  .map((c) => `[文档${c.id}]\n摘要：${c.summary}\n内容：${c.content}`)
+  .join("\n\n")}`;
+
+    try {
+      const url = `${config.chatApi.baseUrl}/chat/completions`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.chatApi.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.chatApi.model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userContent },
+          ],
+          max_tokens: 20000,
+          temperature: 0.1,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`LLM rerank failed: ${response.status}`);
+      }
+
+      const data = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      const content = data.choices[0]?.message?.content || "[]";
+
+      // 解析评分结果
+      const jsonMatch = content.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) {
+        throw new Error("无法解析评分结果");
+      }
+
+      const scores = JSON.parse(jsonMatch[0]) as Array<{
+        id: number;
+        score: number;
+      }>;
+
+      // 根据 LLM 评分重新排序
+      const scoredResults = results.map((result, idx) => {
+        const scoreItem = scores.find((s) => s.id === idx);
+        const llmScore = scoreItem?.score ?? 5;
+        // 综合原始向量相似度和 LLM 评分
         const combinedScore =
-          Number(result.similarity) * 0.4 + rerankScore * 0.6;
+          Number(result.similarity) * 0.3 + (llmScore / 10) * 0.7;
+        return { ...result, similarity: combinedScore };
+      });
 
-        return {
-          ...result,
-          similarity: combinedScore,
-        };
-      })
-    );
-
-    // 按综合分数排序并取前 topK 个
-    return scoredResults
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, topK);
+      return scoredResults
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, topK);
+    } catch (error) {
+      console.error("LLM 重排序解析失败:", error);
+      // 降级：直接返回原始结果
+      return results.slice(0, topK);
+    }
   }
 }
 

@@ -182,6 +182,7 @@ export class EmbeddingService {
   /**
    * 构建增强文本
    * 将上下文信息与内容组合成一个增强的文本
+   * 注意：使用简洁的格式，避免引入过多标记影响语义匹配
    */
   private buildEnrichedText(
     content: string,
@@ -193,21 +194,14 @@ export class EmbeddingService {
   ): string {
     const parts: string[] = [];
 
-    if (context.title) {
-      parts.push(`[标题] ${context.title}`);
-    }
-
-    if (context.documentType) {
-      parts.push(`[类型] ${context.documentType}`);
-    }
-
+    // 简化格式：只添加摘要作为上下文，不添加标签前缀
     if (context.parentSummary) {
-      parts.push(`[摘要] ${context.parentSummary}`);
+      parts.push(context.parentSummary);
     }
 
-    parts.push(`[内容] ${content}`);
+    parts.push(content);
 
-    return parts.join("\n");
+    return parts.join("\n\n");
   }
 
   /**
