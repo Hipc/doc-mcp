@@ -11,6 +11,20 @@ interface ChatCompletionResponse {
 }
 
 /**
+ * 查询策略类型
+ */
+export type QueryStrategy = "direct" | "expansion" | "hyde";
+
+/**
+ * AI 分析查询结果
+ */
+export interface QueryAnalysis {
+  strategy: QueryStrategy;
+  reason: string;
+  confidence: number;
+}
+
+/**
  * 查询改写服务
  * 使用 LLM 对用户查询进行扩展和优化，提高检索效果
  */
@@ -30,7 +44,8 @@ export class QueryService {
    */
   private async callChatApi(
     systemPrompt: string,
-    userContent: string
+    userContent: string,
+    maxTokens: number = 20000
   ): Promise<string> {
     const url = `${this.baseUrl}/chat/completions`;
 
@@ -46,7 +61,7 @@ export class QueryService {
           { role: "system", content: systemPrompt },
           { role: "user", content: userContent },
         ],
-        max_tokens: 20000,
+        max_tokens: maxTokens,
         temperature: DEFAULT_SUMMARY_TEMPERATURE,
       }),
     });
@@ -58,6 +73,102 @@ export class QueryService {
 
     const data = (await response.json()) as ChatCompletionResponse;
     return data.choices[0]?.message?.content || "";
+  }
+
+  /**
+   * AI 智能分析查询，决定最佳检索策略
+   * @param query 用户查询
+   * @returns 查询分析结果，包含推荐策略
+   */
+  async analyzeQuery(query: string): Promise<QueryAnalysis> {
+    const systemPrompt = `你是一个智能查询分析专家。分析用户的查询，决定最佳的检索策略。
+
+三种策略：
+1. **direct** - 直接检索：查询已经足够清晰具体，包含明确的关键词或术语
+   - 适用：精确搜索、包含代码/API名称、专业术语明确
+   - 例如："getUserById函数"、"DATABASE_URL配置"、"prisma schema定义"
+
+2. **expansion** - 查询扩展：查询较短或词汇单一，需要扩展同义词和相关术语
+   - 适用：短查询、单个词、可能有多种表述方式
+   - 例如："数据库"、"认证"、"缓存配置"
+
+3. **hyde** - 假设文档：查询是问句或描述性需求，与文档表述方式差异大
+   - 适用：如何/怎么问题、故障排查、概念解释、最佳实践
+   - 例如："如何配置数据库连接？"、"为什么请求超时？"、"什么是向量嵌入？"
+
+请以JSON格式输出分析结果：
+{
+  "strategy": "direct|expansion|hyde",
+  "reason": "简短说明选择理由",
+  "confidence": 0.0-1.0
+}
+
+只输出JSON，不要其他内容。`;
+
+    try {
+      const result = await this.callChatApi(
+        systemPrompt,
+        `分析以下查询：${query}`,
+        2000
+      );
+
+      // 解析 JSON 结果
+      const jsonMatch = result.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const analysis = JSON.parse(jsonMatch[0]) as QueryAnalysis;
+        // 验证策略值
+        if (!["direct", "expansion", "hyde"].includes(analysis.strategy)) {
+          analysis.strategy = "expansion";
+        }
+        console.log(
+          `[查询分析] 策略: ${analysis.strategy}, 原因: ${analysis.reason}, 置信度: ${analysis.confidence}`
+        );
+        return analysis;
+      }
+
+      // 解析失败，使用默认策略
+      return this.getDefaultStrategy(query);
+    } catch (error) {
+      console.error("查询分析失败，使用默认策略:", error);
+      return this.getDefaultStrategy(query);
+    }
+  }
+
+  /**
+   * 基于规则的默认策略（AI 分析失败时的回退）
+   */
+  private getDefaultStrategy(query: string): QueryAnalysis {
+    const trimmedQuery = query.trim();
+
+    // 问句模式 -> HyDE
+    if (
+      /^(如何|怎么|怎样|为什么|什么是|是什么|how|what|why|when|where)/i.test(
+        trimmedQuery
+      )
+    ) {
+      return { strategy: "hyde", reason: "问句类型查询", confidence: 0.7 };
+    }
+
+    // 短查询 -> 扩展
+    if (trimmedQuery.length < 10 || trimmedQuery.split(/\s+/).length < 3) {
+      return {
+        strategy: "expansion",
+        reason: "短查询需要扩展",
+        confidence: 0.6,
+      };
+    }
+
+    // 包含代码特征 -> 直接检索
+    if (/[A-Z][a-z]+[A-Z]|_[a-z]+|\.[\w]+\(|`/.test(trimmedQuery)) {
+      return {
+        strategy: "direct",
+        reason: "包含代码/API特征",
+        confidence: 0.8,
+      };
+    }
+
+    // 默认使用扩展
+    return { strategy: "expansion", reason: "默认策略", confidence: 0.5 };
   }
 
   /**
@@ -150,8 +261,7 @@ export class QueryService {
   }
 
   /**
-   * 获取增强后的查询文本
-   * 结合原始查询和扩展查询
+   * 获取增强后的查询文本（手动指定策略）
    * @param query 原始查询
    * @param useHyDE 是否使用 HyDE 方法
    * @returns 增强后的查询文本
@@ -166,6 +276,49 @@ export class QueryService {
     }
     console.log("使用查询扩展方法");
     return this.expandQuery(query);
+  }
+
+  /**
+   * 智能获取增强后的查询文本（AI 自动选择策略）
+   * @param query 原始查询
+   * @returns 增强后的查询文本和使用的策略
+   */
+  async getSmartEnhancedQuery(query: string): Promise<{
+    enhancedQuery: string;
+    strategy: QueryStrategy;
+    analysis: QueryAnalysis;
+  }> {
+    // AI 分析最佳策略
+    const analysis = await this.analyzeQuery(query);
+
+    let enhancedQuery: string;
+
+    switch (analysis.strategy) {
+      case "direct":
+        // 直接使用原始查询
+        console.log("[智能查询] 使用直接检索策略");
+        enhancedQuery = query;
+        break;
+
+      case "hyde":
+        // 使用 HyDE 生成假设文档
+        console.log("[智能查询] 使用 HyDE 策略");
+        enhancedQuery = await this.generateHypotheticalDocument(query);
+        break;
+
+      case "expansion":
+      default:
+        // 使用查询扩展
+        console.log("[智能查询] 使用查询扩展策略");
+        enhancedQuery = await this.expandQuery(query);
+        break;
+    }
+
+    return {
+      enhancedQuery,
+      strategy: analysis.strategy,
+      analysis,
+    };
   }
 }
 

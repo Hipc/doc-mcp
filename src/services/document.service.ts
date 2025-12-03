@@ -30,8 +30,9 @@ export interface SearchDocumentRequest {
   project_name?: string; // 项目名称（可选，不提供则全局检索）
   top_k?: number; // 返回结果数量（默认10）
   similarity_threshold?: number; // 相似度阈值（默认0.3）
-  use_query_expansion?: boolean; // 是否使用查询扩展（默认true）
-  use_hyde?: boolean; // 是否使用HyDE方法（默认false）
+  use_smart_query?: boolean; // 是否使用AI智能选择查询策略（默认true）
+  use_query_expansion?: boolean; // 手动指定：是否使用查询扩展（use_smart_query=false时生效）
+  use_hyde?: boolean; // 手动指定：是否使用HyDE方法（use_smart_query=false时生效）
   use_rerank?: boolean; // 是否使用重排序（默认true）
 }
 
@@ -57,6 +58,8 @@ export interface SearchDocumentResponse {
   project_name?: string;
   total_results: number;
   results: SearchResultItem[];
+  query_strategy?: string; // 使用的查询策略
+  strategy_reason?: string; // 策略选择原因
 }
 
 /**
@@ -371,7 +374,7 @@ export class DocumentService {
 
   /**
    * 检索文档
-   * 使用向量相似度搜索，支持查询扩展、HyDE和重排序
+   * 使用向量相似度搜索，支持AI智能选择查询策略、查询扩展、HyDE和重排序
    */
   async searchDocuments(
     request: SearchDocumentRequest
@@ -381,16 +384,35 @@ export class DocumentService {
       project_name,
       top_k = 10,
       similarity_threshold = 0.3,
+      use_smart_query = true,
       use_query_expansion = true,
       use_hyde = false,
       use_rerank = true,
     } = request;
 
-    // 获取增强后的查询（可选：查询扩展或HyDE）
+    // 获取增强后的查询
     let searchQuery = query;
-    if (use_query_expansion || use_hyde) {
+    let queryStrategy: string | undefined;
+    let strategyReason: string | undefined;
+
+    if (use_smart_query) {
+      // AI 智能选择最佳查询策略
+      const smartResult = await this.queryService.getSmartEnhancedQuery(query);
+      searchQuery = smartResult.enhancedQuery;
+      queryStrategy = smartResult.strategy;
+      strategyReason = smartResult.analysis.reason;
+      console.log(`[智能检索] 策略: ${queryStrategy}, 原因: ${strategyReason}`);
+      console.log(
+        "[智能检索] 增强后的查询:",
+        searchQuery.substring(0, 200) + "..."
+      );
+    } else if (use_query_expansion || use_hyde) {
+      // 手动指定策略
       searchQuery = await this.queryService.getEnhancedQuery(query, use_hyde);
+      queryStrategy = use_hyde ? "hyde" : "expansion";
       console.log("增强后的查询:", searchQuery);
+    } else {
+      queryStrategy = "direct";
     }
 
     // 生成查询文本的向量嵌入
@@ -459,6 +481,8 @@ export class DocumentService {
       project_name,
       total_results: results.length,
       results,
+      query_strategy: queryStrategy,
+      strategy_reason: strategyReason,
     };
   }
 

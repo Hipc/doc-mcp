@@ -229,8 +229,14 @@ export async function searchDocuments(
   next: NextFunction
 ) {
   try {
-    const { query, project_name, top_k, similarity_threshold, use_hyde } =
-      req.body;
+    const {
+      query,
+      project_name,
+      top_k,
+      similarity_threshold,
+      use_hyde,
+      use_smart_query,
+    } = req.body;
 
     // 参数验证
     if (!query || typeof query !== "string") {
@@ -246,6 +252,7 @@ export async function searchDocuments(
       project_name,
       top_k: top_k ? Number(top_k) : undefined,
       use_hyde: use_hyde === true,
+      use_smart_query: use_smart_query === true,
       similarity_threshold: similarity_threshold
         ? Number(similarity_threshold)
         : undefined,

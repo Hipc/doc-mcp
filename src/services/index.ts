@@ -6,7 +6,7 @@ export {
 } from "./chunking.service";
 export { SummaryService } from "./summary.service";
 export { EmbeddingService } from "./embedding.service";
-export { QueryService } from "./query.service";
+export { QueryService, QueryStrategy, QueryAnalysis } from "./query.service";
 export {
   DocumentService,
   UploadDocumentRequest,
