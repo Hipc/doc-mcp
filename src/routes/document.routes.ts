@@ -4,6 +4,7 @@ import {
   getDocument,
   getDocumentsByProject,
   deleteDocument,
+  searchDocuments,
 } from "../controllers";
 
 const router: IRouter = Router();
@@ -14,6 +15,9 @@ const router: IRouter = Router();
 
 // 上传文档
 router.post("/", uploadDocument);
+
+// 检索文档（支持指定项目或全局检索）
+router.post("/search", searchDocuments);
 
 // 获取项目的文档列表
 router.get("/", getDocumentsByProject);

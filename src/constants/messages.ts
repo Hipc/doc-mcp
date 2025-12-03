@@ -10,6 +10,7 @@ export const ERROR_MESSAGES = {
   MISSING_PROJECT_NAME: "缺少必需参数: projectName（项目名称）",
   MISSING_DOCUMENT_ID: "缺少文档ID",
   MISSING_QUERY_PROJECT_NAME: "缺少查询参数: projectName",
+  MISSING_QUERY: "缺少必需参数: query（检索关键词）",
 
   // 资源错误
   DOCUMENT_NOT_FOUND: "文档不存在",
@@ -46,6 +47,9 @@ export const LOG_MESSAGES = {
   GET_DOCUMENT_FAILED: "获取文档失败",
   GET_DOCUMENT_LIST_FAILED: "获取文档列表失败",
   DELETE_DOCUMENT_FAILED: "删除文档失败",
+  SEARCHING_DOCUMENTS: "开始检索文档",
+  SEARCH_COMPLETE: "检索完成",
+  SEARCH_FAILED: "检索失败",
   SHUTTING_DOWN: "正在关闭服务...",
   STARTUP_FAILED: "启动失败",
 } as const;

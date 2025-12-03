@@ -10,4 +10,7 @@ export {
   DocumentService,
   UploadDocumentRequest,
   UploadDocumentResponse,
+  SearchDocumentRequest,
+  SearchDocumentResponse,
+  SearchResultItem,
 } from "./document.service";

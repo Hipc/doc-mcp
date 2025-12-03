@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import { DocumentType } from "@prisma/client";
-import { DocumentService, UploadDocumentRequest } from "../services";
+import {
+  DocumentService,
+  UploadDocumentRequest,
+  SearchDocumentRequest,
+} from "../services";
 import {
   ERROR_MESSAGES,
   SUCCESS_MESSAGES,
@@ -203,6 +207,66 @@ export async function deleteDocument(
     });
   } catch (error) {
     console.error(LOG_MESSAGES.DELETE_DOCUMENT_FAILED, error);
+    next(error);
+  }
+}
+
+/**
+ * 检索文档
+ * POST /api/documents/search
+ *
+ * 请求体:
+ * {
+ *   "query": "检索关键词",
+ *   "project_name": "项目名称（可选，不提供则全局检索）",
+ *   "top_k": 10,（可选，默认10）
+ *   "similarity_threshold": 0.5（可选，默认0.5）
+ * }
+ */
+export async function searchDocuments(
+  req: Request,
+  res: Response,
+  next: NextFunction
+) {
+  try {
+    const { query, project_name, top_k, similarity_threshold } = req.body;
+
+    // 参数验证
+    if (!query || typeof query !== "string") {
+      return res.status(400).json({
+        success: false,
+        error: ERROR_MESSAGES.MISSING_QUERY,
+      });
+    }
+
+    // 构建检索请求
+    const searchRequest: SearchDocumentRequest = {
+      query,
+      project_name,
+      top_k: top_k ? Number(top_k) : undefined,
+      similarity_threshold: similarity_threshold
+        ? Number(similarity_threshold)
+        : undefined,
+    };
+
+    console.log(
+      `${LOG_MESSAGES.SEARCHING_DOCUMENTS}: 关键词="${query}", 项目=${
+        project_name || "全局"
+      }`
+    );
+
+    const result = await documentService.searchDocuments(searchRequest);
+
+    console.log(
+      `${LOG_MESSAGES.SEARCH_COMPLETE}: 找到 ${result.total_results} 条结果`
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error(LOG_MESSAGES.SEARCH_FAILED, error);
     next(error);
   }
 }

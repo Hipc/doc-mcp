@@ -22,6 +22,40 @@ export interface UploadDocumentRequest {
 }
 
 /**
+ * 文档检索请求参数
+ */
+export interface SearchDocumentRequest {
+  query: string; // 检索关键词
+  project_name?: string; // 项目名称（可选，不提供则全局检索）
+  top_k?: number; // 返回结果数量（默认10）
+  similarity_threshold?: number; // 相似度阈值（默认0.5）
+}
+
+/**
+ * 检索结果项
+ */
+export interface SearchResultItem {
+  document_id: string;
+  document_title?: string;
+  project_name: string;
+  document_type: DocumentType;
+  parent_chunk_content: string;
+  parent_chunk_summary?: string;
+  child_chunk_content: string;
+  similarity: number;
+}
+
+/**
+ * 文档检索响应
+ */
+export interface SearchDocumentResponse {
+  query: string;
+  project_name?: string;
+  total_results: number;
+  results: SearchResultItem[];
+}
+
+/**
  * 文档上传响应
  */
 export interface UploadDocumentResponse {
@@ -306,6 +340,78 @@ export class DocumentService {
       where: { id: documentId },
     });
     return !!result;
+  }
+
+  /**
+   * 检索文档
+   * 使用向量相似度搜索，支持指定项目名称或全局检索
+   */
+  async searchDocuments(
+    request: SearchDocumentRequest
+  ): Promise<SearchDocumentResponse> {
+    const {
+      query,
+      project_name,
+      top_k = 10,
+      similarity_threshold = 0.5,
+    } = request;
+
+    // 生成查询文本的向量嵌入
+    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+    const embeddingStr = `[${queryEmbedding.join(",")}]`;
+
+    // 构建SQL查询，使用向量相似度搜索
+    let results: SearchResultItem[];
+
+    if (project_name) {
+      // 指定项目名称的检索
+      results = await prisma.$queryRaw<SearchResultItem[]>`
+        SELECT 
+          d.id as document_id,
+          d.title as document_title,
+          d."projectName" as project_name,
+          d.type as document_type,
+          pc.content as parent_chunk_content,
+          pc.summary as parent_chunk_summary,
+          cc.content as child_chunk_content,
+          1 - (ce.embedding <=> ${embeddingStr}::vector) as similarity
+        FROM chunk_embeddings ce
+        JOIN child_chunks cc ON ce."chunkId" = cc.id
+        JOIN parent_chunks pc ON cc."parentChunkId" = pc.id
+        JOIN documents d ON pc."documentId" = d.id
+        WHERE d."projectName" = ${project_name}
+          AND 1 - (ce.embedding <=> ${embeddingStr}::vector) >= ${similarity_threshold}
+        ORDER BY ce.embedding <=> ${embeddingStr}::vector
+        LIMIT ${top_k}
+      `;
+    } else {
+      // 全局检索
+      results = await prisma.$queryRaw<SearchResultItem[]>`
+        SELECT 
+          d.id as document_id,
+          d.title as document_title,
+          d."projectName" as project_name,
+          d.type as document_type,
+          pc.content as parent_chunk_content,
+          pc.summary as parent_chunk_summary,
+          cc.content as child_chunk_content,
+          1 - (ce.embedding <=> ${embeddingStr}::vector) as similarity
+        FROM chunk_embeddings ce
+        JOIN child_chunks cc ON ce."chunkId" = cc.id
+        JOIN parent_chunks pc ON cc."parentChunkId" = pc.id
+        JOIN documents d ON pc."documentId" = d.id
+        WHERE 1 - (ce.embedding <=> ${embeddingStr}::vector) >= ${similarity_threshold}
+        ORDER BY ce.embedding <=> ${embeddingStr}::vector
+        LIMIT ${top_k}
+      `;
+    }
+
+    return {
+      query,
+      project_name,
+      total_results: results.length,
+      results,
+    };
   }
 }
 
