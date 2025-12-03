@@ -12,7 +12,7 @@ import { ChunkStrategyConfig, EMBEDDING_TYPES } from "../constants";
 export interface UploadDocumentRequest {
   content: string; // 文档内容（纯文本）
   type: DocumentType; // 文档类型
-  projectName: string; // 所属项目名称
+  project_name: string; // 所属项目名称
   title?: string; // 文档标题（可选）
   metadata?: Record<string, any>; // 额外元数据（可选）
 }
@@ -21,12 +21,12 @@ export interface UploadDocumentRequest {
  * 文档上传响应
  */
 export interface UploadDocumentResponse {
-  documentId: string;
+  document_id: string;
   title?: string;
   type: DocumentType;
-  projectName: string;
-  chunksCreated: number;
-  embeddingsCreated: number;
+  project_name: string;
+  chunks_created: number;
+  embeddings_created: number;
   strategies: ChunkStrategyConfig[];
 }
 
@@ -66,7 +66,7 @@ export class DocumentService {
     request: UploadDocumentRequest,
     onProgress?: ProgressCallback
   ): Promise<UploadDocumentResponse> {
-    const { content, type, projectName, title, metadata } = request;
+    const { content, type, project_name, title, metadata } = request;
 
     // 阶段1: 保存原始文档
     onProgress?.("saving_document", 0, 1);
@@ -74,7 +74,7 @@ export class DocumentService {
       data: {
         content,
         type,
-        projectName,
+        projectName: project_name,
         title,
         metadata: metadata ? (metadata as Prisma.InputJsonValue) : undefined,
       },
@@ -184,12 +184,12 @@ export class DocumentService {
     }
 
     return {
-      documentId: document.id,
+      document_id: document.id,
       title: document.title || undefined,
       type: document.type,
-      projectName: document.projectName,
-      chunksCreated: totalChunksCreated,
-      embeddingsCreated: totalEmbeddingsCreated,
+      project_name: document.projectName,
+      chunks_created: totalChunksCreated,
+      embeddings_created: totalEmbeddingsCreated,
       strategies: usedStrategies,
     };
   }

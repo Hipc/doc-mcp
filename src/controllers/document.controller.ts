@@ -27,7 +27,7 @@ function parseDocumentType(typeStr: string): DocumentType {
  * {
  *   "content": "文档内容（纯文本）",
  *   "type": "api_doc | tech_doc | code_logic_doc | general_doc",
- *   "projectName": "项目名称",
+ *   "project_name": "项目名称",
  *   "title": "文档标题（可选）",
  *   "metadata": { ... }（可选）
  * }
@@ -38,7 +38,7 @@ export async function uploadDocument(
   next: NextFunction
 ) {
   try {
-    const { content, type, projectName, title, metadata } = req.body;
+    const { content, type, project_name, title, metadata } = req.body;
 
     // 参数验证
     if (!content || typeof content !== "string") {
@@ -55,7 +55,7 @@ export async function uploadDocument(
       });
     }
 
-    if (!projectName || typeof projectName !== "string") {
+    if (!project_name || typeof project_name !== "string") {
       return res.status(400).json({
         success: false,
         error: ERROR_MESSAGES.MISSING_PROJECT_NAME,
@@ -69,14 +69,14 @@ export async function uploadDocument(
     const uploadRequest: UploadDocumentRequest = {
       content,
       type: documentType,
-      projectName,
+      project_name,
       title,
       metadata,
     };
 
     // 处理文档上传
     console.log(
-      `${LOG_MESSAGES.PROCESSING_DOCUMENT}: 项目=${projectName}, 类型=${documentType}`
+      `${LOG_MESSAGES.PROCESSING_DOCUMENT}: 项目=${project_name}, 类型=${documentType}`
     );
 
     const result = await documentService.uploadDocument(
@@ -87,7 +87,7 @@ export async function uploadDocument(
     );
 
     console.log(
-      `${LOG_MESSAGES.DOCUMENT_UPLOAD_COMPLETE}: ${result.documentId}`
+      `${LOG_MESSAGES.DOCUMENT_UPLOAD_COMPLETE}: ${result.document_id}`
     );
 
     return res.status(201).json({
@@ -140,7 +140,7 @@ export async function getDocument(
 
 /**
  * 获取项目的文档列表
- * GET /api/documents?projectName=xxx
+ * GET /api/documents?project_name=xxx
  */
 export async function getDocumentsByProject(
   req: Request,
@@ -148,16 +148,16 @@ export async function getDocumentsByProject(
   next: NextFunction
 ) {
   try {
-    const { projectName } = req.query;
+    const { project_name } = req.query;
 
-    if (!projectName || typeof projectName !== "string") {
+    if (!project_name || typeof project_name !== "string") {
       return res.status(400).json({
         success: false,
         error: ERROR_MESSAGES.MISSING_QUERY_PROJECT_NAME,
       });
     }
 
-    const documents = await documentService.getDocumentsByProject(projectName);
+    const documents = await documentService.getDocumentsByProject(project_name);
 
     return res.json({
       success: true,
