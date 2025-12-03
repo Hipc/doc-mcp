@@ -140,6 +140,77 @@ export class EmbeddingService {
   }
 
   /**
+   * 生成带上下文增强的 embedding
+   * 将上下文信息（如标题、摘要）与内容组合后生成向量
+   * @param content 主要内容
+   * @param context 上下文信息
+   * @returns 向量数组
+   */
+  async generateContextualEmbedding(
+    content: string,
+    context: {
+      title?: string;
+      parentSummary?: string;
+      documentType?: string;
+    }
+  ): Promise<number[]> {
+    const enrichedText = this.buildEnrichedText(content, context);
+    return this.generateEmbedding(enrichedText);
+  }
+
+  /**
+   * 批量生成带上下文增强的 embeddings
+   * @param items 包含内容和上下文的数组
+   * @returns 向量数组的数组
+   */
+  async generateContextualEmbeddings(
+    items: Array<{
+      content: string;
+      context: {
+        title?: string;
+        parentSummary?: string;
+        documentType?: string;
+      };
+    }>
+  ): Promise<number[][]> {
+    const enrichedTexts = items.map((item) =>
+      this.buildEnrichedText(item.content, item.context)
+    );
+    return this.generateEmbeddings(enrichedTexts);
+  }
+
+  /**
+   * 构建增强文本
+   * 将上下文信息与内容组合成一个增强的文本
+   */
+  private buildEnrichedText(
+    content: string,
+    context: {
+      title?: string;
+      parentSummary?: string;
+      documentType?: string;
+    }
+  ): string {
+    const parts: string[] = [];
+
+    if (context.title) {
+      parts.push(`[标题] ${context.title}`);
+    }
+
+    if (context.documentType) {
+      parts.push(`[类型] ${context.documentType}`);
+    }
+
+    if (context.parentSummary) {
+      parts.push(`[摘要] ${context.parentSummary}`);
+    }
+
+    parts.push(`[内容] ${content}`);
+
+    return parts.join("\n");
+  }
+
+  /**
    * 计算两个向量的余弦相似度
    * @param vec1 向量1
    * @param vec2 向量2

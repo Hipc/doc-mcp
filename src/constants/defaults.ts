@@ -29,11 +29,14 @@ export const RECURSIVE_SEPARATORS = [
 ];
 
 // 默认切割策略（父子索引）
+// 优化后的参数：
+// - 增大子切片大小以包含更多上下文
+// - 增加重叠比例以保持语义连贯性
 export const DEFAULT_CHUNK_STRATEGIES: ChunkStrategyConfig[] = [
   {
     parentChunkSize: 2000,
-    childChunkSize: 500,
-    overlapPercent: 20,
+    childChunkSize: 800,
+    overlapPercent: 25,
     name: "default",
   },
 ];

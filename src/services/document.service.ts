@@ -7,6 +7,7 @@ import {
 } from "./chunking.service";
 import { SummaryService } from "./summary.service";
 import { EmbeddingService } from "./embedding.service";
+import { QueryService } from "./query.service";
 import { config } from "../config";
 import { ChunkStrategyConfig, EMBEDDING_TYPES } from "../constants";
 
@@ -28,7 +29,10 @@ export interface SearchDocumentRequest {
   query: string; // 检索关键词
   project_name?: string; // 项目名称（可选，不提供则全局检索）
   top_k?: number; // 返回结果数量（默认10）
-  similarity_threshold?: number; // 相似度阈值（默认0.5）
+  similarity_threshold?: number; // 相似度阈值（默认0.3）
+  use_query_expansion?: boolean; // 是否使用查询扩展（默认true）
+  use_hyde?: boolean; // 是否使用HyDE方法（默认false）
+  use_rerank?: boolean; // 是否使用重排序（默认true）
 }
 
 /**
@@ -87,11 +91,13 @@ export class DocumentService {
   private chunkingService: ChunkingService;
   private summaryService: SummaryService;
   private embeddingService: EmbeddingService;
+  private queryService: QueryService;
 
   constructor() {
     this.chunkingService = new ChunkingService();
     this.summaryService = new SummaryService();
     this.embeddingService = new EmbeddingService();
+    this.queryService = new QueryService();
   }
 
   /**
@@ -160,27 +166,48 @@ export class DocumentService {
         onProgress?.("generating_summaries", i + 1, parentChunks.length);
       }
 
-      // 阶段3.2: 收集所有子切片内容用于批量生成嵌入
-      const allChildContents: string[] = [];
-      const childToParentMap: { parentIdx: number; childIdx: number }[] = [];
+      // 阶段3.2: 收集所有子切片内容用于批量生成嵌入（带上下文增强）
+      const childItems: Array<{
+        content: string;
+        context: {
+          title?: string;
+          parentSummary?: string;
+          documentType?: string;
+        };
+        parentIdx: number;
+        childIdx: number;
+      }> = [];
 
       for (let pIdx = 0; pIdx < parentChunks.length; pIdx++) {
         const parent = parentChunks[pIdx];
+        const parentSummary = parentSummaries[pIdx];
         for (let cIdx = 0; cIdx < parent.children.length; cIdx++) {
-          allChildContents.push(parent.children[cIdx].content);
-          childToParentMap.push({ parentIdx: pIdx, childIdx: cIdx });
+          childItems.push({
+            content: parent.children[cIdx].content,
+            context: {
+              title: title,
+              parentSummary: parentSummary,
+              documentType: type,
+            },
+            parentIdx: pIdx,
+            childIdx: cIdx,
+          });
         }
       }
 
-      // 阶段3.3: 为子切片生成向量嵌入
-      onProgress?.("generating_embeddings", 0, allChildContents.length);
-      const allEmbeddings = await this.embeddingService.generateEmbeddings(
-        allChildContents
-      );
+      // 阶段3.3: 为子切片生成带上下文增强的向量嵌入
+      onProgress?.("generating_embeddings", 0, childItems.length);
+      const allEmbeddings =
+        await this.embeddingService.generateContextualEmbeddings(
+          childItems.map((item) => ({
+            content: item.content,
+            context: item.context,
+          }))
+        );
       onProgress?.(
         "generating_embeddings",
-        allChildContents.length,
-        allChildContents.length
+        childItems.length,
+        childItems.length
       );
 
       // 阶段3.4: 保存父切片、子切片和嵌入到数据库
@@ -344,7 +371,7 @@ export class DocumentService {
 
   /**
    * 检索文档
-   * 使用向量相似度搜索，支持指定项目名称或全局检索
+   * 使用向量相似度搜索，支持查询扩展、HyDE和重排序
    */
   async searchDocuments(
     request: SearchDocumentRequest
@@ -353,12 +380,27 @@ export class DocumentService {
       query,
       project_name,
       top_k = 10,
-      similarity_threshold = 0.5,
+      similarity_threshold = 0.3,
+      use_query_expansion = true,
+      use_hyde = false,
+      use_rerank = true,
     } = request;
 
+    // 获取增强后的查询（可选：查询扩展或HyDE）
+    let searchQuery = query;
+    if (use_query_expansion || use_hyde) {
+      searchQuery = await this.queryService.getEnhancedQuery(query, use_hyde);
+      console.log("增强后的查询:", searchQuery);
+    }
+
     // 生成查询文本的向量嵌入
-    const queryEmbedding = await this.embeddingService.generateEmbedding(query);
+    const queryEmbedding = await this.embeddingService.generateEmbedding(
+      searchQuery
+    );
     const embeddingStr = `[${queryEmbedding.join(",")}]`;
+
+    // 检索时获取更多结果用于后续重排序
+    const retrieveCount = use_rerank ? top_k * 3 : top_k;
 
     // 构建SQL查询，使用向量相似度搜索
     let results: SearchResultItem[];
@@ -382,7 +424,7 @@ export class DocumentService {
         WHERE d."projectName" = ${project_name}
           AND 1 - (ce.embedding <=> ${embeddingStr}::vector) >= ${similarity_threshold}
         ORDER BY ce.embedding <=> ${embeddingStr}::vector
-        LIMIT ${top_k}
+        LIMIT ${retrieveCount}
       `;
     } else {
       // 全局检索
@@ -402,8 +444,14 @@ export class DocumentService {
         JOIN documents d ON pc."documentId" = d.id
         WHERE 1 - (ce.embedding <=> ${embeddingStr}::vector) >= ${similarity_threshold}
         ORDER BY ce.embedding <=> ${embeddingStr}::vector
-        LIMIT ${top_k}
+        LIMIT ${retrieveCount}
       `;
+    }
+
+    // 重排序：使用原始查询与结果内容的语义相似度进行重排序
+    if (use_rerank && results.length > 0) {
+      console.log("使用重排序对结果进行优化");
+      results = await this.rerankResults(query, results, top_k);
     }
 
     return {
@@ -412,6 +460,55 @@ export class DocumentService {
       total_results: results.length,
       results,
     };
+  }
+
+  /**
+   * 重排序结果
+   * 使用原始查询与结果的语义相关性进行重排序
+   */
+  private async rerankResults(
+    originalQuery: string,
+    results: SearchResultItem[],
+    topK: number
+  ): Promise<SearchResultItem[]> {
+    // 为原始查询生成 embedding
+    const queryEmbedding = await this.embeddingService.generateEmbedding(
+      originalQuery
+    );
+
+    // 为每个结果计算与原始查询的相关性分数
+    const scoredResults = await Promise.all(
+      results.map(async (result) => {
+        // 组合子切片和父切片摘要作为重排序的文本
+        const combinedText = `${result.child_chunk_content}\n${
+          result.parent_chunk_summary || ""
+        }`;
+        const resultEmbedding = await this.embeddingService.generateEmbedding(
+          combinedText
+        );
+
+        // 计算与原始查询的余弦相似度
+        const rerankScore = EmbeddingService.cosineSimilarity(
+          queryEmbedding,
+          resultEmbedding
+        );
+
+        // 综合原始相似度和重排序分数
+        // 原始相似度权重 0.4，重排序分数权重 0.6
+        const combinedScore =
+          Number(result.similarity) * 0.4 + rerankScore * 0.6;
+
+        return {
+          ...result,
+          similarity: combinedScore,
+        };
+      })
+    );
+
+    // 按综合分数排序并取前 topK 个
+    return scoredResults
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, topK);
   }
 }
 
