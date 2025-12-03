@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider        = "prisma-client-js"
+    previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+    provider   = "postgresql"
+    extensions = [vector]
+}
+
+// 文档类型枚举
+enum DocumentType {
+    API_DOC // API接口文档
+    TECH_DOC // 技术实现文档
+    CODE_LOGIC_DOC // 内部代码逻辑文档
+    GENERAL_DOC // 通用文档
+}
+
+// 原始文档表
+model Document {
+    id          String       @id @default(uuid())
+    title       String? // 文档标题
+    content     String // 原始文档内容（纯文本）
+    type        DocumentType // 文档类型
+    projectName String // 所属项目名称
+    metadata    Json? // 额外元数据
+    createdAt   DateTime     @default(now())
+    updatedAt   DateTime     @updatedAt
+
+    // 关联的文档切片
+    chunks DocumentChunk[]
+
+    @@index([projectName])
+    @@index([type])
+    @@map("documents")
+}
+
+// 切割策略表 - 记录使用的切割配置
+model ChunkStrategy {
+    id        String   @id @default(uuid())
+    chunkSize Int // 切割块大小（字符数）
+    overlap   Int // 重叠大小（字符数）
+    name      String? // 策略名称，如 "small", "medium", "large"
+    createdAt DateTime @default(now())
+
+    // 使用此策略的切片
+    chunks DocumentChunk[]
+
+    @@unique([chunkSize, overlap])
+    @@map("chunk_strategies")
+}
+
+// 文档切片表 - 存储切割后的文档片段
+model DocumentChunk {
+    id            String   @id @default(uuid())
+    content       String // 切片内容
+    chunkIndex    Int // 在原文档中的序号
+    startPosition Int // 在原文档中的起始位置
+    endPosition   Int // 在原文档中的结束位置
+    summary       String? // 切片摘要
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+
+    // 关联原始文档
+    documentId String
+    document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+    // 关联切割策略
+    strategyId String
+    strategy   ChunkStrategy @relation(fields: [strategyId], references: [id])
+
+    // 关联的向量嵌入
+    embeddings ChunkEmbedding[]
+
+    @@index([documentId])
+    @@index([strategyId])
+    @@map("document_chunks")
+}
+
+// 向量嵌入表 - 存储文档切片的向量表示
+model ChunkEmbedding {
+    id            String                      @id @default(uuid())
+    embedding     Unsupported("vector(1536)") // OpenAI text-embedding-3-small 的维度
+    embeddingType String // 嵌入类型：content（原文内容）、summary（摘要）
+    model         String // 使用的嵌入模型
+    createdAt     DateTime                    @default(now())
+
+    // 关联文档切片
+    chunkId String
+    chunk   DocumentChunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+    @@index([chunkId])
+    @@map("chunk_embeddings")
+}
