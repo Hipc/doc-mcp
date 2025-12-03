@@ -1,6 +1,7 @@
 export {
   ChunkingService,
-  ChunkResult,
+  ChildChunkResult,
+  ParentChunkResult,
   StrategyChunkResult,
 } from "./chunking.service";
 export { SummaryService } from "./summary.service";
